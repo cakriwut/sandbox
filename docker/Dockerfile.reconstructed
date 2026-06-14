@@ -1,0 +1,697 @@
+# =============================================================================
+# Reconstructed Dockerfile for ghcr.io/agent-infra/sandbox:latest (v1.9.3)
+# Reverse-engineered from image layers using `dive` and `docker history`
+#
+# Base image: Ubuntu 22.04
+# Total image size: ~8.5 GB (compressed ~3.5 GB)
+# Architecture: linux/amd64
+#
+# NOTE: This Dockerfile cannot be built standalone — it references COPY sources
+# (configs, scripts, build stages) from the original repo's build context.
+# It is provided as documentation of what the image contains.
+# =============================================================================
+
+# ---- Stage: browser-deps (separate build stage, provides /uv, /uvx) ----
+# FROM ghcr.io/astral-sh/uv:latest AS uv-stage
+# (uv 44.4 MB and uvx 393 KB are copied from a build stage)
+
+# ---- Stage: python-server-builder (provides /wheels/*.whl) ----
+# FROM python:3.12 AS python-server-builder
+# (wheels ~379 KB copied from build stage)
+
+# ---- Stage: python-server-requirements (provides /app/requirements.txt) ----
+# FROM python:3.12 AS python-server-requirements
+# (requirements.txt ~12 KB copied from build stage)
+
+# ---- Stage: node-runtime-builder (provides /root/sandbox/runtime/node/node_modules) ----
+# FROM node:22 AS node-runtime-builder
+# (node_modules ~157 MB copied from build stage)
+
+# =============================================================================
+# Main image
+# =============================================================================
+FROM ubuntu:22.04
+
+# ---------------------------------------------------------------------------
+# Browser kernel stage args & base browser deps
+# ---------------------------------------------------------------------------
+ARG REGION=china-north-lf
+ARG TARGETARCH=amd64
+ARG APT_MIRROR_HOST=
+ARG BROWSER_SOURCE=rs
+ARG CUSTOM_BROWSER_KERNEL=
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+RUN set -eux; \
+    if [ -n "${APT_MIRROR_HOST}" ]; then \
+        cp /etc/apt/sources.list /etc/apt/sources.list.orig; \
+        sed -i -E -e "s;//([^/]*\.)?(ubuntu\.com|debian\.org);//${APT_MIRROR_HOST};g" /etc/apt/sources.list; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ca-certificates \
+        curl \
+        unzip \
+        libasound2 \
+        libatk-bridge2.0-0 \
+        libatk1.0-0 \
+        libatspi2.0-0 \
+        libcairo2 \
+        libcups2 \
+        libdbus-1-3 \
+        libdrm2 \
+        libgbm1 \
+        libglib2.0-0 \
+        libnspr4 \
+        libnss3 \
+        libpango-1.0-0 \
+        libwayland-client0 \
+        libx11-6 \
+        libxcb1 \
+        libxcomposite1 \
+        libxdamage1 \
+        libxext6 \
+        libxfixes3 \
+        libxkbcommon0 \
+        libxrandr2 \
+        fonts-liberation \
+        libgtk-3-0 \
+        libvulkan1 \
+        wget \
+        xdg-utils && \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Install Chromium browser via browser-ctl script (~372 MB)
+# ---------------------------------------------------------------------------
+COPY browser-kernel/browser-ctl.sh /opt/gem/browser-ctl.sh
+
+RUN set -eux; \
+    chmod +x /opt/gem/browser-ctl.sh; \
+    case "${REGION}" in \
+      "china-north-lf"|"") URL_PREFIX="https://lf3-static.bytednsdoc.com/obj/eden-cn/100upeupq/" ;; \
+      "aliyun_sg") URL_PREFIX="https://sf16-sg.tiktokcdn.com/obj/eden-sg/100upeupq/" ;; \
+      "aliyun_va") URL_PREFIX="https://sf16-va.tiktokcdn.com/obj/eden-va2/100upeupq/" ;; \
+      "us-east"|"us-east-red") URL_PREFIX="https://sf16-va.tiktokcdn.com/obj/eden-va2/100upeupq/" ;; \
+      *) URL_PREFIX="https://lf3-static.bytednsdoc.com/obj/eden-cn/100upeupq/" ;; \
+    esac; \
+    TARGETARCH="${TARGETARCH}" ASSET_PREFIX="${URL_PREFIX}" CUSTOM_BROWSER_KERNEL="${CUSTOM_BROWSER_KERNEL}" \
+        /opt/gem/browser-ctl.sh install ${BROWSER_SOURCE}
+
+COPY browser-kernel/chromium-browser.desktop /usr/share/applications/chromium-browser.desktop
+RUN update-desktop-database /usr/share/applications 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Browser version label & environment variables
+# ---------------------------------------------------------------------------
+ARG BROWSER_VERSION=146.0.7680.31
+LABEL maintainer="AIO Sandbox Team" \
+      browser.version=${BROWSER_VERSION} \
+      browser.source=rs
+
+ENV USER=gem \
+    USER_UID=1000 \
+    USER_GID=1000 \
+    DISPLAY=:99.0 \
+    DISPLAY_DEPTH=24 \
+    BROWSER_EXECUTABLE_PATH=/usr/local/bin/browser \
+    BROWSER_REMOTE_DEBUGGING_PORT=9222 \
+    AGENT_BROWSER_EXECUTABLE_PATH=/usr/local/bin/browser \
+    BROWSER_COMMANDLINE_ARGS="--disable-backgrounding-occluded-windows \
+    --disable-background-timer-throttling \
+    --disable-blink-features=AutomationControlled \
+    --disable-dev-shm-usage \
+    --disable-external-intent-requests \
+    --disable-features=IPH_DesktopCustomizeChrome,IsolateOrigins,site-per-proces,Translate \
+    --disable-focus-on-load \
+    --disable-gpu \
+    --disable-infobars \
+    --disable-popup-blocking \
+    --disable-prompt-on-repost \
+    --disable-renderer-backgrounding \
+    --disable-site-isolation-trials \
+    --disable-window-activation \
+    --mute-audio \
+    --no-default-browser-check \
+    --no-first-run \
+    --noerrdialogs \
+    --remote-allow-origins=* \
+    --remote-debugging-port=9222 \
+    --suppress-message-center-popups \
+    --start-maximized" \
+    BROWSER_EXTRA_ARGS= \
+    LOG_DIR=/var/log/gem \
+    JWT_PUBLIC_KEY= \
+    VNC_SERVER_PORT=5900 \
+    WEBSOCKET_PROXY_PORT=6080 \
+    PUBLIC_PORT=8080 \
+    AUTH_BACKEND_PORT=8081 \
+    WAIT_TIMEOUT=300 \
+    WAIT_INTERVAL=0.25 \
+    RUN_HOOK_INIT= \
+    RUN_HOOK_PRE_SERVICES= \
+    RUN_HOOK_POST_READY= \
+    RUN_HOOKS_STRICT=false \
+    SANDBOX_SHUTDOWN_HOOKS= \
+    SANDBOX_SHUTDOWN_HOOKS_TIMEOUT=30 \
+    WORKSPACE= \
+    TZ=Asia/Singapore \
+    HOMEPAGE= \
+    GITHUB_TOKEN= \
+    AIO_SKILLS_PATH= \
+    SANDBOX_SRV_PORT=8091 \
+    NODEJS_REPL_PORT= \
+    NODEJS_REPL_PORT_20=8192 \
+    NODEJS_REPL_PORT_22=8092 \
+    NODEJS_REPL_PORT_24=8392 \
+    DISABLE_NODEJS_REPL=false \
+    JUPYTER_LAB_PORT=8888 \
+    CODE_SERVER_PORT=8200 \
+    MCP_SERVER_BROWSER_PORT=8100 \
+    OPENCODE_PORT=4096 \
+    TINYPROXY_PORT=8118 \
+    WAIT_PORTS=8091 \
+    WAIT_FILES= \
+    MAX_SHELL_SESSIONS=10 \
+    PYTHONPATH= \
+    LOG_STDOUT_SERVER=false
+
+# Additional region/build args for the main image
+ARG REGION=china-north-lf
+ARG APT_MIRROR_HOST=
+ARG TARGETARCH=amd64
+ARG INSTALL_HEAVY_FONTS=true
+ARG DISABLE_MCP_SERVER=true
+ARG PIP_INDEX_URL=https://bytedpypi.byted.org/simple
+ARG UV_DEFAULT_INDEX=https://bytedpypi.byted.org/simple
+
+ENV DEBIAN_FRONTEND=noninteractive \
+    LANG=en_US.UTF-8 \
+    LANGUAGE=en_US:en \
+    LC_ALL=en_US.UTF-8 \
+    PUPPETEER_EXECUTABLE_PATH=/usr/local/bin/browser \
+    PUPPETEER_SKIP_CHROMIUM_DOWNLOAD=true \
+    BROWSER_NO_SANDBOX= \
+    BROWSER_LANG=en-US \
+    CHROME_UI_LANG= \
+    BROWSER_USER_AGENT= \
+    DISPLAY_WIDTH=1280 \
+    DISPLAY_HEIGHT=1024 \
+    DNS_OVER_HTTPS_TEMPLATES= \
+    UV_TOOL_BIN_DIR=/usr/local/bin/ \
+    UV_TOOL_DIR=/usr/local/share/uv/tools \
+    DISABLE_JUPYTER=false \
+    DISABLE_CODE_SERVER=false \
+    DISABLE_BROWSER=false \
+    DISABLE_MCP_BROWSER=false \
+    DISABLE_VNC=false \
+    ENABLE_CJK_IME=true \
+    EXTRA_MCP_SERVERS= \
+    AIO_BASE_URL=http://localhost:8091 \
+    BROWSER_DOWNLOAD_DIR= \
+    BROWSER_INIT_COOKIES= \
+    BROWSER_URL_BLOCKLIST= \
+    BROWSER_URL_ALLOWLIST= \
+    PROXY_BYPASS_LIST= \
+    OTEL_SDK_DISABLED=false \
+    SRV_PYTHONPATH=/otel-auto-instrumentation-python/opentelemetry/instrumentation/auto_instrumentation:/otel-auto-instrumentation-python \
+    OTEL_PYTHON_DISABLED_INSTRUMENTATIONS=redis \
+    FAAS_SANDBOX_RUNTIME_INJECTION_ENABLE_SANDBOXD=false
+
+# ---------------------------------------------------------------------------
+# Core system packages (~344 MB)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    if [ -n "${APT_MIRROR_HOST}" ]; then \
+        cp /etc/apt/sources.list /etc/apt/sources.list.orig; \
+        sed -i -E -e "s;//([^/]*\.)?(ubuntu\.com|debian\.org);//${APT_MIRROR_HOST};g" /etc/apt/sources.list; \
+    fi; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        tzdata \
+        locales \
+        ca-certificates \
+        software-properties-common \
+        openssh-client \
+        wget curl \
+        vim nano \
+        git \
+        unzip zip tar gzip \
+        tree htop \
+        iputils-ping telnet net-tools lsof netcat-openbsd nmap \
+        file less rsync lsyncd \
+        procps psmisc coreutils util-linux sudo gettext \
+        grep sed gawk jq ripgrep \
+        tmux \
+        gh \
+        python3 python3-pip python3-tk python3-dev \
+        nginx; \
+    if [ "$REGION" = "china-north-lf" ]; then \
+        /bin/cp -f /usr/share/zoneinfo/PRC /etc/localtime && echo "PRC" > /etc/timezone; \
+    fi; \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Desktop / VNC / GUI packages (~760 MB)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        ffmpeg imagemagick \
+        tigervnc-standalone-server x11-xserver-utils \
+        x11-utils \
+        xdotool xclip \
+        openbox \
+        tilix \
+        gnome-screenshot \
+        autocutsel \
+        libxv1 \
+        fontconfig \
+        gcc build-essential make pkg-config \
+        cmake ninja-build \
+        libcairo2-dev libffi-dev libpango1.0-dev freeglut3-dev; \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# CJK / IME support (~286 MB)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    apt-get update; \
+    apt-get install -y --no-install-recommends \
+        dbus dbus-x11 \
+        fcitx5 \
+        fcitx5-chinese-addons \
+        fcitx5-frontend-gtk3 \
+        fcitx5-frontend-qt5; \
+    rm -rf /var/lib/apt/lists/*
+
+# ---------------------------------------------------------------------------
+# Heavy fonts (Noto CJK, emoji, Thai, Khmer, etc.) (~890 MB)
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    if [ "${INSTALL_HEAVY_FONTS}" = "true" ]; then \
+        apt-get update; \
+        apt-get install -y --no-install-recommends \
+            fonts-noto-cjk fonts-noto-cjk-extra fonts-dejavu \
+            fonts-noto-core fonts-noto-extra \
+            fonts-noto-color-emoji \
+            fonts-thai-tlwg fonts-khmeros fonts-lao fonts-sil-padauk \
+            fonts-arphic-ukai fonts-arphic-uming \
+            xfonts-intl-chinese \
+            fonts-ipafont-mincho fonts-ipafont-gothic fonts-takao-mincho \
+            fonts-unfonts-core fonts-indic; \
+        rm -rf /var/lib/apt/lists/*; \
+    fi
+
+# Restore original apt sources if modified
+RUN if [ -f /etc/apt/sources.list.orig ]; then \
+        mv /etc/apt/sources.list.orig /etc/apt/sources.list; \
+    fi
+
+# Font aliases config
+COPY ./configs/gem/99-font-aliases.conf /etc/fonts/conf.d/99-font-aliases.conf
+
+RUN update-ca-certificates && \
+    locale-gen en_US.UTF-8 && locale-gen zh_CN.UTF-8 && \
+    fc-cache -fv
+
+# ---------------------------------------------------------------------------
+# Websocat (~7.25 MB)
+# ---------------------------------------------------------------------------
+ARG WEBSOCAT_URL=
+ARG GITHUB_PROXY=
+
+RUN set -eux; \
+    _websocat_url="${WEBSOCAT_URL}"; \
+    if [ -z "${_websocat_url}" ]; then \
+        ARCH_STRING=""; \
+        case "${TARGETARCH}" in \
+            "amd64") ARCH_STRING="x86_64" ;; \
+            "arm64") ARCH_STRING="aarch64" ;; \
+            *) echo "Unsupported architecture for websocat: ${TARGETARCH}"; exit 1 ;; \
+        esac; \
+        _websocat_url="${GITHUB_PROXY}https://github.com/vi/websocat/releases/download/v1.13.0/websocat.${ARCH_STRING}-unknown-linux-musl"; \
+    fi; \
+    wget -O /usr/local/bin/websocat "${_websocat_url}"; \
+    chmod +x /usr/local/bin/websocat
+
+# ---------------------------------------------------------------------------
+# noVNC (~2.33 MB)
+# ---------------------------------------------------------------------------
+ARG NOVNC_URL=
+
+RUN set -eux; \
+    _novnc_url="${NOVNC_URL}"; \
+    if [ -z "${_novnc_url}" ]; then \
+        _novnc_url="${GITHUB_PROXY}https://github.com/novnc/noVNC/archive/refs/tags/v1.4.0.zip"; \
+    fi; \
+    wget -O /tmp/novnc.zip "${_novnc_url}"; \
+    unzip -q /tmp/novnc.zip -d /tmp/novnc; \
+    mv /tmp/novnc/noVNC-1.4.0 /opt/novnc; \
+    cp /opt/novnc/vnc.html /opt/novnc/index.html; \
+    rm -rf /tmp/novnc.zip /tmp/novnc
+
+# ---------------------------------------------------------------------------
+# Browser alternatives & desktop entry
+# ---------------------------------------------------------------------------
+RUN set -eux; \
+    update-alternatives --install /usr/local/bin/browser browser /opt/browser/chrome 150; \
+    update-alternatives --install /usr/bin/x-www-browser x-www-browser /opt/browser/chrome 150; \
+    update-alternatives --install /usr/bin/gnome-www-browser gnome-www-browser /opt/browser/chrome 150; \
+    ln -sf /usr/local/bin/browser /usr/local/bin/chromium; \
+    ln -sf /usr/local/bin/browser /usr/local/bin/chromium-browser; \
+    ln -sf /usr/local/bin/browser /usr/local/bin/chromium-browser-stable; \
+    ln -sf /etc/browser /etc/chromium
+
+COPY browser-kernel/chromium-browser.desktop /usr/share/applications/chromium-browser.desktop
+RUN update-desktop-database /usr/share/applications 2>/dev/null || true
+
+# ---------------------------------------------------------------------------
+# Supervisor (from git commit)
+# ---------------------------------------------------------------------------
+RUN pip install git+https://github.com/Supervisor/supervisor.git@abc60468ea4b78c446cf3a194f6fccb83d90f670 && \
+    ln -sf /usr/local/bin/supervisord /usr/bin/supervisord && \
+    ln -sf /usr/local/bin/supervisorctl /usr/bin/supervisorctl
+
+# ---------------------------------------------------------------------------
+# gost proxy (~27.9 MB)
+# ---------------------------------------------------------------------------
+ARG GOST_VERSION=3.0.0-rc10
+
+RUN curl -fsSL ${GITHUB_PROXY}https://github.com/go-gost/gost/releases/download/v${GOST_VERSION}/gost_${GOST_VERSION}_linux_${TARGETARCH}.tar.gz \
+    | tar xz -C /usr/local/bin/ gost && \
+    chmod +x /usr/local/bin/gost
+
+# ---------------------------------------------------------------------------
+# yt-dlp (~3.08 MB)
+# ---------------------------------------------------------------------------
+COPY ./configs/yt-dlp /usr/local/bin/yt-dlp
+RUN chmod a+rx /usr/local/bin/yt-dlp
+
+# ---------------------------------------------------------------------------
+# uv & uvx (from build stage, ~44.8 MB total)
+# ---------------------------------------------------------------------------
+COPY --from=uv-stage /uv /usr/local/bin/uv
+COPY --from=uv-stage /uvx /usr/local/bin/uvx
+
+# ---------------------------------------------------------------------------
+# Python pip: meson
+# ---------------------------------------------------------------------------
+RUN pip install --no-cache-dir meson
+
+# ---------------------------------------------------------------------------
+# Python runtime requirements (~1.26 GB — numpy, matplotlib, pandas, etc.)
+# ---------------------------------------------------------------------------
+COPY ./configs/runtime-requirements.txt /tmp/runtime-requirements.txt
+RUN pip install --no-cache-dir --prefer-binary --timeout=300 --retries=5 \
+    -r /tmp/runtime-requirements.txt && \
+    rm /tmp/runtime-requirements.txt
+
+# ---------------------------------------------------------------------------
+# Python standalone builds (3.11 + 3.12) (~204 MB)
+# ---------------------------------------------------------------------------
+ARG PYTHON_3_11_URL_AMD64=https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.11.13+20250723-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG PYTHON_3_11_URL_ARM64=https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.11.13+20250723-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG PYTHON_3_12_URL_AMD64=https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz
+ARG PYTHON_3_12_URL_ARM64=https://github.com/astral-sh/python-build-standalone/releases/download/20250723/cpython-3.12.11+20250723-aarch64-unknown-linux-gnu-install_only_stripped.tar.gz
+ENV PYTHON_CODE_EXEC_VERSION=python3
+
+ARG GO_VERSION=1.22.8
+ENV GO_PATH=/usr/local/go
+ENV PATH=/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+# Go (~222 MB)
+RUN set -eux; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        GO_ARCH="arm64"; \
+    else \
+        GO_ARCH="amd64"; \
+    fi; \
+    curl -L https://go.dev/dl/go${GO_VERSION}.linux-${GO_ARCH}.tar.gz | tar -C /usr/local -xzf - && \
+    go version
+
+# opencode CLI (~297 MB)
+RUN for i in 1 2 3 4 5; do \
+        curl -fsSL --connect-timeout 10 --max-time 60 https://opencode.ai/install | bash -s -- --no-modify-path && break; \
+        echo "opencode install attempt $i failed, retrying in 5s..."; sleep 5; \
+    done && \
+    install -m 755 /root/.opencode/bin/opencode /usr/local/bin/opencode && \
+    /usr/local/bin/opencode --version
+
+# Python 3.11 + 3.12 standalone (~204 MB)
+RUN set -eux; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        PYTHON_3_11_URL=$PYTHON_3_11_URL_ARM64; \
+        PYTHON_3_12_URL=$PYTHON_3_12_URL_ARM64; \
+    else \
+        PYTHON_3_11_URL=$PYTHON_3_11_URL_AMD64; \
+        PYTHON_3_12_URL=$PYTHON_3_12_URL_AMD64; \
+    fi; \
+    wget -O /tmp/python311.tar.gz $PYTHON_3_11_URL & \
+    wget -O /tmp/python312.tar.gz $PYTHON_3_12_URL & \
+    wait; \
+    mkdir -p /opt/python3.11 /opt/python3.12; \
+    tar -xzf /tmp/python311.tar.gz -C /opt/python3.11 --strip-components=1 & \
+    tar -xzf /tmp/python312.tar.gz -C /opt/python3.12 --strip-components=1 & \
+    wait; \
+    rm /tmp/python311.tar.gz /tmp/python312.tar.gz; \
+    /opt/python3.11/bin/python -m ensurepip --upgrade && \
+    /opt/python3.12/bin/python -m ensurepip --upgrade && \
+    ln -s /opt/python3.11/bin/python /usr/local/bin/python3.11 && \
+    ln -s /opt/python3.11/bin/pip3 /usr/local/bin/pip3.11 && \
+    ln -s /opt/python3.12/bin/python /usr/local/bin/python3.12 && \
+    ln -s /opt/python3.12/bin/pip3 /usr/local/bin/pip3.12 && \
+    ln -s /usr/bin/python3 /usr/bin/python;
+
+ENV CC=gcc CXX=g++
+
+# ---------------------------------------------------------------------------
+# code-server (~454 MB)
+# ---------------------------------------------------------------------------
+ARG CODE_SERVER_VERSION=4.104.0
+
+COPY ./patches/code-server-4.104.0/workbench.js.patch /tmp/code-server-4.104.0-workbench.js.patch
+
+RUN set -eux; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        CODE_SERVER_ARCH_NAME="arm64"; \
+    else \
+        CODE_SERVER_ARCH_NAME="amd64"; \
+    fi; \
+    curl -fL ${GITHUB_PROXY}https://github.com/coder/code-server/releases/download/v${CODE_SERVER_VERSION}/code-server-${CODE_SERVER_VERSION}-linux-${CODE_SERVER_ARCH_NAME}.tar.gz \
+        | tar -C /usr/local -xz && \
+    mv /usr/local/code-server-${CODE_SERVER_VERSION}-linux-${CODE_SERVER_ARCH_NAME} /usr/local/code-server-${CODE_SERVER_VERSION} && \
+    ln -s /usr/local/code-server-${CODE_SERVER_VERSION}/bin/code-server /usr/bin/code-server && \
+    cd /usr/local/code-server-${CODE_SERVER_VERSION}/lib/vscode/out/vs/code/browser/workbench && \
+    patch -p0 < /tmp/code-server-4.104.0-workbench.js.patch && \
+    rm -rf /tmp/code-server-4.104.0-workbench.js.patch && \
+    /usr/bin/code-server --version;
+
+# ---------------------------------------------------------------------------
+# JupyterLab (~203 MB)
+# ---------------------------------------------------------------------------
+RUN /opt/python3.12/bin/pip3 install jupyterlab==4.4.5 && \
+    mkdir -p /opt/jupyter/runtime /opt/jupyter/data && \
+    chmod -R 755 /opt/jupyter;
+
+# ---------------------------------------------------------------------------
+# Python kernels for Jupyter (~318 MB)
+# ---------------------------------------------------------------------------
+RUN /usr/bin/python3.10 -m pip install ipykernel \
+    && /usr/bin/python3.10 -m ipykernel install --name python3.10 --display-name "Python 3.10" \
+    && /opt/python3.11/bin/python -m pip install ipykernel matplotlib numpy \
+    && /opt/python3.11/bin/python -m ipykernel install --name python3.11 --display-name "Python 3.11" \
+    && /opt/python3.12/bin/python -m pip install ipykernel \
+    && /opt/python3.12/bin/python -m ipykernel install --name python3.12 --display-name "Python 3.12"
+
+# Matplotlib font config
+COPY ./configs/gem/_aio_mpl_fontconfig.py /tmp/_aio_mpl_fontconfig.py
+COPY ./configs/gem/aio-mpl-fontconfig.pth /tmp/aio-mpl-fontconfig.pth
+
+RUN for site_dir in \
+        $(/usr/bin/python3.10 -c "import site; print(site.getsitepackages()[0])") \
+        $(/opt/python3.11/bin/python -c "import site; print(site.getsitepackages()[0])") \
+        $(/opt/python3.12/bin/python -c "import site; print(site.getsitepackages()[0])"); do \
+        cp /tmp/_aio_mpl_fontconfig.py "$site_dir/_aio_mpl_fontconfig.py"; \
+        cp /tmp/aio-mpl-fontconfig.pth "$site_dir/aio-mpl-fontconfig.pth"; \
+    done && rm /tmp/_aio_mpl_fontconfig.py /tmp/aio-mpl-fontconfig.pth
+
+# ---------------------------------------------------------------------------
+# Node.js via fnm (v20, v22, v24) — default: 22 (~558 MB)
+# ---------------------------------------------------------------------------
+ENV NODE_CODE_EXEC_VERSION=node22
+ENV FNM_DIR=/opt/fnm
+ENV NODEJS_DIR=/opt/nodejs
+ENV PATH=/opt/nodejs/22/bin:/opt/nodejs/20/bin:/opt/nodejs/24/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+ARG FNM_VERSION=1.38.1
+
+RUN set -eux; \
+    if [ "$TARGETARCH" = "arm64" ]; then \
+        FNM_ARCHIVE="fnm-arm64.zip"; \
+    else \
+        FNM_ARCHIVE="fnm-linux.zip"; \
+    fi; \
+    curl -fsSL "${GITHUB_PROXY}https://github.com/Schniz/fnm/releases/download/v${FNM_VERSION}/${FNM_ARCHIVE}" -o /tmp/fnm.zip; \
+    unzip -q /tmp/fnm.zip -d /tmp/fnm-bin; \
+    mv /tmp/fnm-bin/fnm /usr/local/bin/fnm; \
+    chmod +x /usr/local/bin/fnm; \
+    rm -rf /tmp/fnm.zip /tmp/fnm-bin; \
+    mkdir -p ${FNM_DIR} ${NODEJS_DIR}; \
+    fnm install 20 --fnm-dir ${FNM_DIR}; \
+    fnm install 22 --fnm-dir ${FNM_DIR}; \
+    fnm install 24 --fnm-dir ${FNM_DIR}; \
+    fnm default 22 --fnm-dir ${FNM_DIR}; \
+    for v in 20 22 24; do \
+      VERSIONED_DIR=$(ls -d ${FNM_DIR}/node-versions/v${v}.*/installation 2>/dev/null | head -1); \
+      if [ -n "$VERSIONED_DIR" ] && [ -d "$VERSIONED_DIR" ]; then \
+        ln -sf "$VERSIONED_DIR" ${NODEJS_DIR}/${v}; \
+      fi; \
+    done; \
+    for v in 20 22 24; do \
+      ln -sf ${NODEJS_DIR}/${v}/bin/node /usr/local/bin/node${v}; \
+      ln -sf ${NODEJS_DIR}/${v}/bin/npm /usr/local/bin/npm${v}; \
+      ln -sf ${NODEJS_DIR}/${v}/bin/npx /usr/local/bin/npx${v}; \
+    done; \
+    ln -sf ${NODEJS_DIR}/22/bin/node /usr/local/bin/node; \
+    ln -sf ${NODEJS_DIR}/22/bin/npm /usr/local/bin/npm; \
+    ln -sf ${NODEJS_DIR}/22/bin/npx /usr/local/bin/npx; \
+    node --version && npm --version; \
+    chmod -R 777 ${FNM_DIR}/node-versions ${FNM_DIR}/aliases
+
+COPY configs/gem/nodejs.sh /etc/profile.d/nodejs.sh
+RUN sed -i '1i . /etc/profile.d/nodejs.sh' /etc/bash.bashrc
+
+# ---------------------------------------------------------------------------
+# Node.js runtime modules (from build stage, ~157 MB)
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/runtime/nodejs
+COPY --from=node-runtime-builder /root/sandbox/runtime/node/node_modules /opt/runtime/nodejs/node_modules
+
+# ---------------------------------------------------------------------------
+# Global npm packages: yarn, bun (~585 MB)
+# ---------------------------------------------------------------------------
+RUN npm install -g \
+    yarn@1.22.22 \
+    bun@1.3.3
+
+# ---------------------------------------------------------------------------
+# agent-browser & MCP browser tools (~280 MB)
+# ---------------------------------------------------------------------------
+RUN npm install -g \
+    agent-browser@0.22.3 \
+    @agent-infra/mcp-server-browser@1.2.29 \
+    chrome-devtools-mcp@0.9.0 && \
+    mv ${NODEJS_DIR}/22/bin/agent-browser ${NODEJS_DIR}/22/bin/agent-browser-real && \
+    ln -sf /opt/gem/agent-browser-wrapper.sh ${NODEJS_DIR}/22/bin/agent-browser
+
+# Symlink all node22 binaries to /usr/local/bin
+RUN set -eux; \
+    for bin in ${NODEJS_DIR}/22/bin/*; do \
+      name=$(basename "$bin"); \
+      if [ ! -e "/usr/local/bin/$name" ]; then \
+        ln -sf "$bin" /usr/local/bin/; \
+      fi; \
+    done
+
+# ---------------------------------------------------------------------------
+# AIO CLI (built from source, ~60.2 MB)
+# ---------------------------------------------------------------------------
+COPY aio-cli/package.json aio-cli/package-lock.json aio-cli/tsconfig.json aio-cli/esbuild.config.mjs /tmp/aio-cli/
+COPY aio-cli/src /tmp/aio-cli/src
+
+RUN cd /tmp/aio-cli && npm ci --ignore-scripts && BUILD_TARGET=sandbox npm run build && \
+    cp dist/aio.js /usr/local/bin/aio && \
+    chmod +x /usr/local/bin/aio && \
+    rm -rf /tmp/aio-cli
+
+COPY aio-cli/skills /opt/skills
+COPY configs/aio/.aiorc.json /.aiorc.json
+
+# ---------------------------------------------------------------------------
+# Python server (from build stages)
+# ---------------------------------------------------------------------------
+COPY --from=python-server-requirements /app/requirements.txt /tmp/requirements.txt
+RUN set -eux; \
+    pip3.12 install --no-cache-dir -r /tmp/requirements.txt
+
+COPY --from=python-server-builder /wheels/*.whl /tmp/wheels/
+RUN set -eux; \
+    pip3.12 install --no-cache-dir --no-deps /tmp/wheels/*.whl && \
+    rm -rf /tmp/wheels /tmp/requirements.txt && \
+    ln -sf /opt/python3.12/bin/python-server /usr/local/bin/python-server
+
+# ---------------------------------------------------------------------------
+# Node.js REPL server (~94.7 MB)
+# ---------------------------------------------------------------------------
+COPY ./repl-servers/nodejs /opt/repl-servers/nodejs
+RUN cd /opt/repl-servers/nodejs && npm install --omit=dev
+
+# ---------------------------------------------------------------------------
+# Config files and scripts
+# ---------------------------------------------------------------------------
+RUN mkdir -p /opt/terminal /opt/browser-ui /opt/aio /opt/gem && \
+    touch /opt/gem/mcp.disabled;
+
+COPY ./configs/gem/ /opt/gem/
+COPY ./run.sh /opt/gem/run.sh
+COPY ./scripts/ca/install_proxy_ca.sh /opt/gem/install-proxy-ca.sh
+COPY ./python-server/terminal.html /opt/terminal/index.html
+COPY ./python-server/browser-ui.html /opt/browser-ui/index.html
+COPY ./configs/index.html.template /opt/aio/index.html.template
+COPY ./static/sandbox /var/www/app/static/sandbox
+
+# opencode config
+RUN mkdir -p /opt/gem/opencode
+COPY ./configs/opencode/config.json /opt/gem/opencode/config.json
+
+# Volcengine CLI tools
+COPY ./tool/cloud-providers/volcengine/ve /usr/local/bin/ve
+COPY ./tool/cloud-providers/volcengine/linux_amd64_ve /usr/local/bin/linux_amd64_ve
+RUN chmod +x /usr/local/bin/ve /usr/local/bin/linux_amd64_ve
+
+# Browser policies
+RUN mkdir -p /etc/browser/policies/managed && \
+    cp /opt/gem/policies.json /etc/browser/policies/managed/policies.json
+
+# Set script permissions and create symlinks
+RUN set -eux; \
+    chmod +x /opt/gem/code-server.sh /opt/gem/jupyter-lab.sh /opt/gem/wait-for-python-server.sh /opt/gem/bashrc /opt/gem/supervisord/python_srv_wrapper.sh; \
+    chmod +x /opt/gem/nginx-wait.sh /opt/gem/openbox.sh /opt/gem/start-browser.sh /opt/gem/agent-browser-init.sh /opt/gem/agent-browser-wrapper.sh /opt/gem/xdg-settings /opt/gem/run.sh /opt/gem/install-proxy-ca.sh; \
+    ln -sf /opt/gem/agent-browser-wrapper.sh /usr/local/bin/agent-browser; \
+    ln -sf /opt/gem/xdg-settings /usr/local/bin/xdg-settings; \
+    mkdir -p /opt/application && \
+    ln -s /opt/gem/run.sh /opt/application/run.sh; \
+    ln -sf /opt/gem/supervisord.conf /etc/supervisord.conf
+
+# Patch nginx config
+RUN sed -i '/types_hash_max_size/a\    client_max_body_size 0;' /opt/gem/nginx.conf && \
+    sed -i \
+        -e '/^http {/,/^}/ {' \
+        -e '/^}/i\    include /opt/gem/nginx-server-port-proxy.conf;' \
+        -e '}' \
+    /opt/gem/nginx.conf && \
+    sed -i \
+        -e '/^http {/,/^}/ {' \
+        -e '/^}/i\    include /opt/gem/nginx-proxy-map.conf;' \
+        -e '}' \
+    /opt/gem/nginx.conf
+
+# ---------------------------------------------------------------------------
+# Version label
+# ---------------------------------------------------------------------------
+ARG VERSION=1.9.3
+LABEL version=${VERSION}
+RUN echo "${VERSION}" > /etc/aio_version
+
+# ---------------------------------------------------------------------------
+# Health check, expose, entrypoint
+# ---------------------------------------------------------------------------
+HEALTHCHECK --interval=10s --timeout=5s \
+    CMD nc -z localhost ${SANDBOX_SRV_PORT} && \
+        ([ "$DISABLE_BROWSER" = "true" ] || nc -z localhost ${BROWSER_REMOTE_DEBUGGING_PORT}) || exit 1
+
+EXPOSE 8080
+
+ENTRYPOINT ["/opt/gem/run.sh"]
